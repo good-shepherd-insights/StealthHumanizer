@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       freezeWords = '',
       synonymIntensity = 15,
       intensity: requestIntensity,
+      modelId: requestModelId,
     } = await request.json();
 
     // Resolve intensity: explicit request wins; else 'stealth' style defaults to
@@ -153,7 +154,7 @@ export async function POST(request: NextRequest) {
       ? getCorpusAwareSystemPrompt(style, writingSample, undefined, language, freezeWords)
       : getSystemPrompt(style, writingSample, language, freezeWords);
     const providerInfo = getProvider(model);
-    const modelId = providerInfo?.defaultModel || model;
+    const modelId = (typeof requestModelId === 'string' && requestModelId.trim()) || providerInfo?.defaultModel || model;
 
     if (Array.isArray(batchTexts) && batchTexts.length > 0) {
       const selected = batchTexts.slice(0, MAX_BATCH_SIZE).filter((item: unknown) => typeof item === 'string' && item.trim().length > 0);

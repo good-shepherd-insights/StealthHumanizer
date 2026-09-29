@@ -19,7 +19,8 @@ const ALLOWED_HOSTS = new Set([
   'api.openai.com', 'api.anthropic.com', 'generativelanguage.googleapis.com',
   'api.mistral.ai', 'api.cohere.ai', 'api.groq.com', 'api.together.xyz',
   'openrouter.ai', 'api.deepinfra.com', 'api.cloudflare.com',
-  'api.gptzero.me', 'api.z.ai',
+  'api.gptzero.me', 'api.z.ai', 'integrate.api.nvidia.com',
+  'inference-api.nousresearch.com', 'api.kilo.ai',
 ]);
 
 // Local inference endpoints (Ollama, LM Studio, vLLM) listen on plain http over

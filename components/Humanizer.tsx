@@ -11,7 +11,7 @@ import { StylePreset, HumanizationResult, ModelProvider, SentenceDetectionResult
 import { SAMPLE_AI_TEXT, SAMPLE_TECHNICAL_TEXT } from '@/lib/prompts';
 import { detectAI } from '@/lib/detector';
 import { getReadabilityLabel } from '@/lib/readability';
-import { countWords, downloadAsTxt, downloadAsDocx, downloadAsMarkdown, getApiKeys } from '@/lib/storage';
+import { countWords, downloadAsTxt, downloadAsDocx, downloadAsMarkdown, getApiKeys, getPreferredModel as loadPreferredModel, setPreferredModel as storePreferredModel } from '@/lib/storage';
 import { buildSentenceResults } from '@/lib/text-utils';
 import { WEB_PROVIDERS as PROVIDERS } from '@/lib/providers';
 import { assessSemanticFidelity } from '@/lib/semantic-fidelity';
@@ -126,6 +126,27 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
   const DEFAULT_PROVIDER: ModelProvider =
     ((process.env.NEXT_PUBLIC_DEFAULT_PROVIDER as ModelProvider | undefined) || 'rudra-free');
   const [preferredModel, setPreferredModel] = useState<ModelProvider>(DEFAULT_PROVIDER);
+  // Persist the selection so a user who picked their own provider (e.g. Gemini)
+  // keeps it across reloads — otherwise the site silently falls back to the
+  // default free model while their key sits unused (GitHub issue #272).
+  useEffect(() => {
+    const saved = loadPreferredModel();
+    if (saved) setPreferredModel(saved as ModelProvider);
+  }, []);
+  const updatePreferredModel = (m: ModelProvider) => {
+    setPreferredModel(m);
+    storePreferredModel(m);
+  };
+  // Live elapsed-seconds counter while a humanization runs — a long LLM call
+  // with a frozen status line reads as "hung" to users (GitHub issues #272/#257).
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    if (!loading) return;
+    const started = Date.now();
+    setElapsedSec(0);
+    const timer = setInterval(() => setElapsedSec(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [loading]);
   const [intensity, setIntensity] = useState<Intensity>('medium');
 
   // Comparison chart visibility (Phase 4)
@@ -261,7 +282,7 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
     setCorrectedText('');
     setPostDetect(null);
     setPostDetectError(null);
-    setPipelineStep('Step 1: LLM Rewrite...');
+    setPipelineStep('Step 1: LLM Rewrite (typically 15–60s with your own API key)...');
     setProgress({ pass: 0, max: 2, message: 'Layer 1: LLM Rewrite...' });
 
     // Rudra's Free Usage Model, DIRECT mode: the browser calls the Oracle VPS
@@ -350,6 +371,9 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
       const response = await fetch(`${BASE_PATH}/api/humanize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Hard client-side bound so the wait is never literally endless — the
+        // server normally answers (or errors) well inside its own budgets.
+        signal: AbortSignal.timeout(170_000),
         body: JSON.stringify({
           text: inputText, style, intensity,
           model: providerId, apiKey, targetScore, language, writingSample,
@@ -446,7 +470,10 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
         }
       })();
     } catch (err: any) {
-      showToast('error', err.message || 'Something went wrong');
+      const msg = err?.name === 'TimeoutError'
+        ? 'Humanization timed out after 170s. Try a shorter text or Rudra\'s Free Usage Model.'
+        : (err.message || 'Something went wrong');
+      showToast('error', msg);
       setLoading(false);
       setProgress({ pass: 0, max: 0, message: '' });
     }
@@ -874,10 +901,25 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
                   <label className="flex items-center gap-2 text-sm font-medium text-dark-300 mb-2">
                     <Sparkles className="w-4 h-4 text-accent-400" /> Model Selection
                   </label>
-                  <select value={preferredModel} onChange={e => setPreferredModel(e.target.value as ModelProvider)}
+                  <select value={preferredModel} onChange={e => updatePreferredModel(e.target.value as ModelProvider)}
                     className="w-full px-3 py-2 bg-dark-800 border border-dark-700/50 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-accent-500/50">
                     {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}{p.free ? ' (Free)' : ''}</option>)}
                   </select>
+                  {(() => {
+                    // Issue #272: users saved a provider key (e.g. Gemini) but the
+                    // model stayed on the free default, so the key was never used.
+                    // Make that state visible instead of silent.
+                    if (preferredModel !== 'rudra-free') return null;
+                    const withKeys = Object.entries(getApiKeys())
+                      .filter(([id, v]) => (v as string)?.trim() && id !== 'rudra-free' && !['ollama', 'lm-studio', 'vllm'].includes(id))
+                      .map(([id]) => PROVIDERS.find(p => p.id === id)?.name || id);
+                    if (withKeys.length === 0) return null;
+                    return (
+                      <p className="text-xs text-amber-400/90 mt-1">
+                        💡 {withKeys.join(', ')} key saved — select {withKeys.length === 1 ? 'it' : 'one of them'} above to use {withKeys.length === 1 ? 'it' : 'one'}; otherwise the free model runs.
+                      </p>
+                    );
+                  })()}
                 </div>
               </div>
               <div>
@@ -1063,7 +1105,7 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
             <button onClick={handleHumanize} disabled={loading || !inputText.trim()}
               className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 text-white font-bold text-lg transition-all shadow-xl shadow-accent-500/20 disabled:opacity-50 disabled:cursor-not-allowed hover-lift hover:shadow-accent-500/40">
               {loading ? (
-                <><RefreshCw className="w-5 h-5 animate-spin" /> {pipelineStep || `${progress.message} (Pass ${progress.pass}/${progress.max})`}</>
+                <><RefreshCw className="w-5 h-5 animate-spin" /> {pipelineStep || `${progress.message} (Pass ${progress.pass}/${progress.max})`}{elapsedSec > 0 ? ` — ${elapsedSec}s elapsed` : ''}</>
               ) : (
                 <><Sparkles className="w-5 h-5" /> Humanize Text</>
               )}

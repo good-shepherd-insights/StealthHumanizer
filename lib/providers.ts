@@ -77,8 +77,13 @@ function sanitizeHuggingFaceModel(model: string): string {
 export async function fetchWithRetry(
   rawUrl: string,
   options: RequestInit = {},
-  timeoutMs: number = 30_000,
-  maxRetries: number = 1,
+  // 45s single attempt: LLM generations (thinking models especially) routinely
+  // exceed 30s, and a 30s × 2-retry budget (60s+) overruns the Vercel Hobby
+  // function clamp — the function gets killed mid-flight and the browser shows
+  // a bare "Failed to fetch". One 45s attempt keeps the worst case inside the
+  // function budget so callers always get a real JSON error they can display.
+  timeoutMs: number = 45_000,
+  maxRetries: number = 0,
 ): Promise<Response> {
   const url = sanitizeUrl(rawUrl);
 
@@ -116,7 +121,9 @@ export async function fetchWithRetry(
     } catch (err: unknown) {
       clearTimeout(timeout);
       if (err instanceof Error && err.name === 'AbortError') {
-        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
+        lastError = new Error(
+          `The provider took over ${Math.round(timeoutMs / 1000)}s to respond and was stopped to avoid a gateway timeout. Try a shorter text, a faster model, or Rudra's Free Usage Model.`
+        );
       } else {
         lastError = err instanceof Error ? err : new Error('Network error');
       }
@@ -721,6 +728,12 @@ async function geminiGenerate(
   const safeModel = encodeURIComponent(sanitizeGeminiModel(model));
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${apiKey}`;
 
+  // Gemini 2.5 models are "thinking" models: with the default reasoning budget
+  // they can spend 30-60s+ thinking before the first output token, which blows
+  // through the fetch timeout and the Vercel function clamp. Humanization is a
+  // single-pass rewrite — no multi-step reasoning needed — so disable thinking
+  // for fast, reliable responses.
+  const needsThinkingConfig = /^gemini-2\.5/.test(safeModel);
   const response = await fetchWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -737,6 +750,7 @@ async function geminiGenerate(
         topK: 40,
         topP: options.topP ?? 0.95,
         maxOutputTokens: options.maxTokens ?? 8192,
+        ...(needsThinkingConfig && { thinkingConfig: { thinkingBudget: 0 } }),
       },
     }),
   });
@@ -747,7 +761,21 @@ async function geminiGenerate(
   }
 
   const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const candidate = data.candidates?.[0];
+  // Join non-thought text parts (thinking models can emit separate thought
+  // parts); an empty text with a finishReason means the model produced nothing
+  // usable — surface that instead of silently returning ''.
+  const text = (candidate?.content?.parts || [])
+    .filter((p: { thought?: boolean }) => !p.thought)
+    .map((p: { text?: string }) => p.text || '')
+    .join('')
+    .trim();
+  if (!text) {
+    throw new Error(
+      `Gemini returned an empty response (finishReason: ${candidate?.finishReason || 'unknown'}). Try a different Gemini model or a shorter text.`
+    );
+  }
+  return text;
 }
 
 // Cohere API

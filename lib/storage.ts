@@ -6,6 +6,7 @@ const KEYS = {
   HISTORY: 'stealthhumanizer_history',
   THEME: 'stealthhumanizer_theme',
   VISITED: 'stealthhumanizer_visited',
+  PREFERRED_MODEL: 'stealthhumanizer_preferred_model',
 };
 
 function encode(data: string): string {
@@ -41,6 +42,25 @@ export function setApiKeys(keys: ApiKeys): void {
 export function clearApiKeys(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(KEYS.API_KEYS);
+}
+
+// Preferred model selection — persisted so a user who picks their own provider
+// (e.g. Gemini) keeps it across reloads instead of silently falling back to the
+// default free model while their key sits unused.
+export function getPreferredModel(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(KEYS.PREFERRED_MODEL);
+  } catch {
+    return null;
+  }
+}
+
+export function setPreferredModel(model: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(KEYS.PREFERRED_MODEL, model);
+  } catch {}
 }
 
 // History

@@ -47,9 +47,9 @@
     "test": "npm run test:roadmap && npm run test:v1-forwarding && npm run test:security && npm run test:cli"
   },
   "dependencies": {
-    "dotenv": "^18.0.5",
+    "dotenv": "^18.0.7",
     "jspdf": "^4.2.1",
-    "lucide-react": "^1.52.0",
+    "lucide-react": "^1.55.0",
     "mammoth": "^1.13.0",
     "next": "16.4.0",
     "pdfjs-dist": "^6.4.299",
@@ -59,7 +59,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.6.1",

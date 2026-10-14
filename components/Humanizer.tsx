@@ -287,27 +287,45 @@ export default function Humanizer({ showToast, onGoToSettings, isFirstVisit }: H
 
     // Rudra's Free Usage Model, DIRECT mode: the browser calls the Oracle VPS
     // itself, skipping Vercel's 60s function clamp. That lets the server run
-    // best-of-4 samples (100s budget) ranked by its detector ensemble — the
-    // verified-0%-on-ZeroGPT configuration. Runs as a background job on the
-    // VPS; this UI polls the same-origin shuttle route so every hop is a fast
-    // call (no Vercel 60s clamp, no cross-origin host in the browser).
+    // best-of-2 samples (130s budget) ranked by its detector ensemble — 2 per
+    // job keeps the free ARM box from all-failing under 2-job contention.
+    // Runs as a background job on the VPS; this UI polls the same-origin
+    // shuttle route so every hop is a fast call (no Vercel 60s clamp, no
+    // cross-origin host in the browser).
     if (providerId === 'rudra-free') {
       try {
         setPipelineStep('Starting humanization job…');
-        const startResp = await fetch(`${BASE_PATH}/api/humanize-job`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: inputText, temperature: 0.85 }),
-        });
-        const startData = await startResp.json().catch(() => ({}));
-        if (!startResp.ok || !startData?.id) throw new Error(startData?.error || `Job start failed (HTTP ${startResp.status})`);
+        // The free VPS runs at most 2 jobs at a time; under load the start
+        // call returns "server busy". Running jobs finish in ~60–90s, so a
+        // short retry loop usually lands a slot instead of failing instantly.
+        let startData: any = null;
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          const startResp = await fetch(`${BASE_PATH}/api/humanize-job`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: inputText, temperature: 0.85 }),
+          });
+          startData = await startResp.json().catch(() => ({}));
+          if (startResp.ok && startData?.id) break;
+          const retriable = startResp.status === 429 || startResp.status >= 500 || /busy|429|50\d/i.test(startData?.error || '');
+          if (!retriable || attempt === 4) {
+            throw new Error(
+              /busy/i.test(startData?.error || '')
+                ? 'The free model is busy right now — it runs on a small shared server. Please try again in a minute, or connect your own API key in Settings for instant results.'
+                : startData?.error || `Job start failed (HTTP ${startResp.status})`,
+            );
+          }
+          setPipelineStep(`Free model is busy — waiting for a slot (retry ${attempt}/3)…`);
+          await new Promise((r) => setTimeout(r, 12_000));
+          startData = null;
+        }
         const jobId: string = startData.id;
 
         let rd: any = null;
         const deadline = Date.now() + 260_000;
         while (Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, 4000));
-          setPipelineStep('Humanizing (best-of-4 sampling)…');
+          setPipelineStep('Humanizing (sampling rewrites)…');
           const stResp = await fetch(`${BASE_PATH}/api/humanize-job?id=${jobId}`);
           const stData = await stResp.json().catch(() => ({}));
           if (stData?.status === 'done') { rd = stData; break; }

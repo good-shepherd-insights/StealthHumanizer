@@ -6,8 +6,8 @@ import { isRudraHumanizerConfigured, rudraFetch } from '@/lib/server/rudra-free'
 //   GET  /api/humanize-job?id=<job>   -> Oracle /job/status/{id}
 // Browsers on some networks cannot reach the VPS domain directly (DNS /
 // embedded-browser restrictions) and Vercel Hobby caps functions at 60s —
-// polling keeps every hop a ~100ms same-origin call while the 80-100s
-// best-of-4 sampling runs on the Oracle side uninterrupted.
+// polling keeps every hop a ~100ms same-origin call while the 60-100s
+// best-of-2 sampling runs on the Oracle side uninterrupted.
 // The VPS is reached through a Cloudflare quick tunnel whose URL can rotate —
 // rudraFetch resolves the current URL and self-heals via the broker on failure.
 
